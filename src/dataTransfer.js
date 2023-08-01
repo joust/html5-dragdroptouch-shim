@@ -1,7 +1,7 @@
 export default class DataTransfer {
   constructor() {
-    this._dropEffect = "move";
-    this._effectAllowed = "all";
+    this._dropEffect = 'move';
+    this._effectAllowed = 'all';
     this._data = {};
   }
 
@@ -47,14 +47,14 @@ export default class DataTransfer {
   }
 
   getData(type) {
-    return this._data[type] || "";
+    return this._data[type] || '';
   }
 
   setData(type, value) {
     this._data[type] = value;
   }
 
-  setDragImage = function (instance, img, offsetX, offsetY) {
+  setDragImage = (instance, img, offsetX, offsetY) => {
     instance._imgCustom = img;
     instance._imgOffset = { x: offsetX, y: offsetY };
   };

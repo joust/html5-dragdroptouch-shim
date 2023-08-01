@@ -7,7 +7,7 @@
     "url": "git@github.com:justinribeiro/html5-dragdroptouch-shim.git"
   },
   "license": "MIT",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "main": "index.js",
   "module": "index.js",
   "files": [
@@ -53,6 +53,11 @@
       "eslint-config-prettier"
     ],
     "rules": {
+      "no-param-reassign": "off",
+      "class-methods-use-this": "off",
+      "no-empty": "off",
+      "no-multi-assign": "off",
+      "prefer-destructuring": "off",
       "no-console": "error",
       "no-plusplus": [
         "error",

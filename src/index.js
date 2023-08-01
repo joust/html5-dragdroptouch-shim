@@ -1,5 +1,4 @@
-import DataTransfer from './dataTransfer.js';
-
+// https://github.com/justinribeiro/html5-dragdroptouch-shim
 export default class DragDropWithTouchSupportShim {
   /**
    * Creates an instance of PolyfillDragDropWithTouchSupport
@@ -8,7 +7,7 @@ export default class DragDropWithTouchSupportShim {
    * @param {number} [args.opacity=0.8]
    * @param {number} [args.dblClick=500]
    * @param {number} [args.ctxMenu=900]
-   * @param {number} [args.isPressHoldMode=400]
+   * @param {boolean} [args.isPressHoldMode=false]
    * @param {number} [args.pressHoldAwait=400]
    * @param {number} [args.pressHoldMargin=25]
    * @param {number} [args.pressHoldThreshold=0]
@@ -18,7 +17,7 @@ export default class DragDropWithTouchSupportShim {
     opacity = 0.8,
     dblClick = 500,
     ctxMenu = 900,
-    isPressHoldMode = 400,
+    isPressHoldMode = false,
     pressHoldAwait = 400,
     pressHoldMargin = 25,
     pressHoldThreshold = 0,
@@ -71,7 +70,10 @@ export default class DragDropWithTouchSupportShim {
     if (this.__shouldHandleEvent(event)) {
       // raise double-click and prevent zooming
       if (Date.now() - this._lastClick < this.setting.DBL_CLICK) {
-        if (this._dispatchEvent(event, 'dblclick', event.target)) {
+        if (
+          this._dispatchEvent(event, 'mousedown', event.composedPath()[0]) ||
+          this._dispatchEvent(event, 'dblclick', event.composedPath()[0])
+        ) {
           event.preventDefault();
           this.setInternalHoldersToDefault();
           return;
@@ -83,8 +85,8 @@ export default class DragDropWithTouchSupportShim {
       if (sourceElementThatIsDragging) {
         // give caller a chance to handle the hover/move events
         if (
-          !this._dispatchEvent(event, 'mousemove', event.target) &&
-          !this._dispatchEvent(event, 'mousedown', event.target)
+          !this._dispatchEvent(event, 'mousemove', event.composedPath()[0]) &&
+          !this._dispatchEvent(event, 'mousedown', event.composedPath()[0])
         ) {
           // get ready to start dragging
           this._dragSource = sourceElementThatIsDragging;
@@ -93,7 +95,7 @@ export default class DragDropWithTouchSupportShim {
           event.preventDefault();
           // show context menu if the user hasn't started dragging after a while
           setTimeout(() => {
-            if (this._dragSource == sourceElementThatIsDragging && this._img == null) {
+            if (this._dragSource === sourceElementThatIsDragging && this._img == null) {
               if (this._dispatchEvent(event, 'contextmenu', sourceElementThatIsDragging)) {
                 this.setInternalHoldersToDefault();
               }
@@ -116,31 +118,35 @@ export default class DragDropWithTouchSupportShim {
       return;
     }
     if (this._shouldHandleMove(event) || this._shouldHandlePressHoldMove(event)) {
-      // see if target wants to handle move
-      const target = this.__getDragOverTarget(event);
-
-      if (this._dispatchEvent(event, 'mousemove', target)) {
-        this._lastTouch = event;
-        event.preventDefault();
-        return;
-      }
-      // start dragging
-      if (this._dragSource && !this._img && this._shouldStartDragging(event)) {
-        this._dispatchEvent(event, 'dragstart', this._dragSource);
-        this._createImage(event);
-        this._dispatchEvent(event, 'dragenter', target);
-      }
-      // continue dragging
-      if (this._img) {
-        this._lastTouch = event;
-        event.preventDefault(); // prevent scrolling
-        if (target != this._lastTarget) {
-          this._dispatchEvent(this._lastTouch, 'dragleave', this._lastTarget);
+      let targets = this.__getDragOverTargets(event);
+      if (targets.includes(this._lastTarget)) targets = [this._lastTarget];
+      for (const target of targets) {
+        // see if target wants to handle move => exit
+        if (this._dispatchEvent(event, 'mousemove', target)) {
+          this._lastTouch = event;
+          event.preventDefault();
+          return;
+        }
+        // start dragging (if not already done)
+        if (this._dragSource && !this._img && this._shouldStartDragging(event)) {
+          this._dispatchEvent(event, 'dragstart', this._dragSource);
+          this._createImage(event);
           this._dispatchEvent(event, 'dragenter', target);
           this._lastTarget = target;
         }
-        this._moveImage(event);
-        this._isDropZone = this._dispatchEvent(event, 'dragover', target);
+        // continue dragging
+        if (this._img) {
+          this._lastTouch = event;
+          event.preventDefault(); // prevent scrolling
+          if (target !== this._lastTarget) {
+            this._dispatchEvent(this._lastTouch, 'dragleave', this._lastTarget);
+            this._dispatchEvent(event, 'dragenter', target);
+            this._lastTarget = target;
+          }
+          this._moveImage(event);
+          this._isDropZone = this._dispatchEvent(event, 'dragover', target);
+          if (this._isDropZone) break; // Don't go deeper if we have found a drop zone
+        }
       }
     }
   }
@@ -148,14 +154,17 @@ export default class DragDropWithTouchSupportShim {
   touchend(event) {
     if (this.__shouldHandleEvent(event)) {
       // see if target wants to handle up
-      if (this._dispatchEvent(this._lastTouch, 'mouseup', event.target)) {
+      if (
+        this._dispatchEvent(event, 'pointerup', event.composedPath()[0]) ||
+        this._dispatchEvent(event, 'mouseup', event.composedPath()[0])
+      ) {
         event.preventDefault();
         return;
       }
       // user clicked the element but didn't drag, so clear the source and simulate a click
       if (!this._img) {
         this._dragSource = null;
-        this._dispatchEvent(this._lastTouch, 'click', event.composedPath()[0]);
+        this._dispatchEvent(event, 'click', event.composedPath()[0]);
         this._lastClick = Date.now();
       }
       // finish dragging
@@ -243,28 +252,21 @@ export default class DragDropWithTouchSupportShim {
   }
 
   /**
-   * Find what we're actually dragging over
+   * Find the element(s) we're dragging over - with possible deeper elements in open shadow doms
    * @param {Event} event
-   * @returns {HTMLElement}
+   * @returns {Array<HTMLElement>}
    */
-  __getDragOverTarget(event) {
-    let element;
-
-    // find what we're looking for in the composed path that isn't a slot or a
-    // fragment
-    const found = event.composedPath().find(i => {
-      if (i.nodeType === 1 && i.nodeName !== 'SLOT') {
-        return i;
-      }
-    });
-
-    if (found) {
-      // find the shadow root for our target
-      const theLowestShadowRoot = found.getRootNode();
-      const pointFromTouchEvent = this._getPoint(event);
-      element = theLowestShadowRoot.elementFromPoint(pointFromTouchEvent.x, pointFromTouchEvent.y);
+  __getDragOverTargets(event) {
+    const point = this._getPoint(event);
+    let element = document.elementFromPoint(point.x, point.y);
+    const elements = [element];
+    while (element && element.shadowRoot) {
+      const deeperElement = element.shadowRoot.elementFromPoint(point.x, point.y);
+      if (!deeperElement || deeperElement === element || deeperElement.nodeType !== 1) break;
+      elements.push(deeperElement);
+      element = deeperElement;
     }
-    return element;
+    return elements;
   }
 
   // create drag image from source element
@@ -324,30 +326,25 @@ export default class DragDropWithTouchSupportShim {
 
   _copyStyle(src, dst) {
     // remove potentially troublesome attributes
-    this.__removeAttributes.forEach(att => {
-      dst.removeAttribute(att);
-    });
+    this.__removeAttributes.forEach(att => dst.removeAttribute(att));
 
     // copy canvas content
     if (src instanceof HTMLCanvasElement) {
-      const cSrc = src;
-      const cDst = dst;
-      cDst.width = cSrc.width;
-      cDst.height = cSrc.height;
-      cDst.getContext('2d').drawImage(cSrc, 0, 0);
+      dst.width = src.width;
+      dst.height = src.height;
+      dst.getContext('2d').drawImage(src, 0, 0);
     }
 
     // copy style (without transitions)
-    const cs = getComputedStyle(src);
-    for (var i = 0; i < cs.length; i++) {
-      const key = cs[i];
-      if (key.indexOf('transition') < 0) {
-        dst.style[key] = cs[key];
-      }
-    }
-    dst.style.pointerEvents = 'none';
+    const cs = window.getComputedStyle(src);
+    Array.from(cs).forEach(key => {
+      if (key.indexOf('transition') < 0)
+        dst.style.setProperty(key, cs.getPropertyValue(key), cs.getPropertyPriority(key));
+    });
+    dst.style.setProperty('pointerEvents', 'none');
+
     // and repeat for all children
-    for (var i = 0; i < src.children.length; i++) {
+    for (let i = 0; i < src.children.length; i++) {
       this._copyStyle(src.children[i], dst.children[i]);
     }
   }
@@ -376,10 +373,13 @@ export default class DragDropWithTouchSupportShim {
    * @returns {HTMLElement}
    */
   __findClosestDraggable(event) {
-    return event.composedPath().find(i => {
-      if (i.attributes) {
-        return i.hasAttribute('draggable');
-      }
-    });
+    return event
+      .composedPath()
+      .find(i =>
+        i.attributes
+          ? i.hasAttribute('draggable') &&
+            (i.getAttribute('draggable') === 'true' || i.getAttribute('draggable') === 'auto')
+          : false,
+      );
   }
 }
